@@ -1,0 +1,4 @@
+/target
+.harness/
+*.log
+deploy/harness/
