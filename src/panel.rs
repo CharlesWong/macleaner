@@ -4,16 +4,17 @@
 
 use crate::bridge::PANEL_HTML;
 use block2::RcBlock;
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSPanel, NSScreen, NSWindowCollectionBehavior,
-    NSWindowStyleMask,
+    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSPanel, NSScreen, NSWindow,
+    NSWindowCollectionBehavior, NSWindowDidResignKeyNotification, NSWindowStyleMask,
 };
 use objc2_foundation::{
-    NSObject, NSObjectProtocol, NSNumber, NSPoint, NSRect, NSSize, NSString,
+    NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSNumber, NSPoint, NSRect,
+    NSSize, NSString,
 };
 use objc2_web_kit::{
     WKScriptMessage, WKScriptMessageHandler, WKUserContentController, WKWebView,
@@ -70,38 +71,143 @@ struct Inner {
 pub struct Panel {
     inner: Option<Inner>,
     mtm: MainThreadMarker,
-    /// Wakes the event loop (with `()`) when a click outside the app dismisses
-    /// the panel, so the loop hides + tears it down promptly.
+    /// Wakes the event loop (with `()`) to dismiss the panel.
     proxy: EventLoopProxy<()>,
-    /// The active global click-outside monitor (only while visible).
-    monitor: Option<Retained<AnyObject>>,
+    /// Local event monitors (Escape key + outside-click) active while visible.
+    monitors: Vec<Retained<AnyObject>>,
+    /// Transparent full-screen window that catches outside clicks so they become
+    /// our-app events (the local monitor then dismisses + swallows them).
+    catcher: Option<Retained<NSWindow>>,
+    /// resign-key observer handle (dismiss on Cmd-Tab / app switch).
+    observer: Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
     pub visible: bool,
 }
 
+/// macOS virtual key code for the Escape key.
+const KEY_ESCAPE: u16 = 53;
+
 impl Panel {
     pub fn new(mtm: MainThreadMarker, proxy: EventLoopProxy<()>) -> Panel {
-        Panel { inner: None, mtm, proxy, monitor: None, visible: false }
-    }
-
-    /// Install a global monitor that fires on any mouse-down OUTSIDE our app
-    /// (global monitors never see our own windows), waking the loop to dismiss.
-    fn install_monitor(&mut self) {
-        if self.monitor.is_some() {
-            return;
+        Panel {
+            inner: None,
+            mtm,
+            proxy,
+            monitors: Vec::new(),
+            catcher: None,
+            observer: None,
+            visible: false,
         }
-        let proxy = self.proxy.clone();
-        let block = RcBlock::new(move |_event: NonNull<NSEvent>| {
-            let _ = proxy.send_event(());
-        });
-        let mask = NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown;
-        self.monitor = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &block);
     }
 
-    fn remove_monitor(&mut self) {
-        if let Some(m) = self.monitor.take() {
-            // SAFETY: `m` was returned by addGlobalMonitorForEvents…; removing it
-            // exactly once is correct.
+    /// A transparent, click-catching window covering all displays, sitting just
+    /// below the panel. Invisible; its only job is to receive (and let us
+    /// swallow) clicks outside the panel.
+    fn build_catcher(mtm: MainThreadMarker) -> Retained<NSWindow> {
+        let frame = NSRect::new(NSPoint::new(-5000.0, -5000.0), NSSize::new(20000.0, 20000.0));
+        let w = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                mtm.alloc(),
+                frame,
+                NSWindowStyleMask::Borderless,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        unsafe {
+            w.setReleasedWhenClosed(false);
+            w.setOpaque(false);
+            w.setBackgroundColor(Some(&NSColor::clearColor()));
+            w.setHasShadow(false);
+            w.setIgnoresMouseEvents(false);
+            w.setLevel(24); // just below the panel's status level (25)
+        }
+        w
+    }
+
+    /// Install the three dismiss triggers: Escape, outside-click (swallowed via
+    /// the catcher + a local monitor), and resign-key (app switch).
+    fn install_dismiss(&mut self, panel_win: &Retained<NSPanel>) {
+        let mtm = self.mtm;
+
+        // Escape key → dismiss + swallow.
+        let p_key = self.proxy.clone();
+        let key_block = RcBlock::new(move |ev: NonNull<NSEvent>| -> *mut NSEvent {
+            let e = unsafe { ev.as_ref() };
+            if e.keyCode() == KEY_ESCAPE {
+                let _ = p_key.send_event(());
+                return ptr::null_mut();
+            }
+            ev.as_ptr()
+        });
+        if let Some(m) =
+            unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &key_block) }
+        {
+            self.monitors.push(m);
+        }
+
+        // Mouse-down: clicks inside the panel pass through; clicks on the catcher
+        // (any other of our windows) dismiss AND are swallowed (return null); a
+        // window-less event is ambiguous → pass through (never dismiss on it).
+        let p_mouse = self.proxy.clone();
+        let pw = panel_win.clone();
+        let mouse_block = RcBlock::new(move |ev: NonNull<NSEvent>| -> *mut NSEvent {
+            let e = unsafe { ev.as_ref() };
+            match e.window(mtm) {
+                Some(w)
+                    if ptr::eq(
+                        Retained::as_ptr(&w) as *const (),
+                        Retained::as_ptr(&pw) as *const (),
+                    ) =>
+                {
+                    ev.as_ptr() // on the panel → pass through
+                }
+                Some(_) => {
+                    let _ = p_mouse.send_event(()); // on the catcher → dismiss
+                    ptr::null_mut() // …and swallow the click
+                }
+                None => ev.as_ptr(), // no window → ambiguous, don't dismiss
+            }
+        });
+        let mmask = NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown;
+        if let Some(m) =
+            unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mmask, &mouse_block) }
+        {
+            self.monitors.push(m);
+        }
+
+        // resign-key (Cmd-Tab / clicking another app) → dismiss. Filtered to OUR
+        // panel window so an unrelated window losing key never dismisses us.
+        let p_obs = self.proxy.clone();
+        let obs_block = RcBlock::new(move |_n: NonNull<NSNotification>| {
+            let _ = p_obs.send_event(());
+        });
+        // SAFETY: NSPanel is an objc object; the cast to &AnyObject is sound and
+        // only used as the notification's object filter.
+        let panel_any: &AnyObject = unsafe { &*(Retained::as_ptr(panel_win) as *const AnyObject) };
+        let observer = unsafe {
+            NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+                Some(NSWindowDidResignKeyNotification),
+                Some(panel_any),
+                None,
+                &obs_block,
+            )
+        };
+        self.observer = Some(observer);
+    }
+
+    fn remove_dismiss(&mut self) {
+        for m in self.monitors.drain(..) {
+            // SAFETY: each `m` was returned by addLocalMonitorForEvents…
             unsafe { NSEvent::removeMonitor(&m) };
+        }
+        if let Some(obs) = self.observer.take() {
+            // SAFETY: `obs` was returned by addObserverForName…; ProtocolObject is
+            // repr(transparent) over the objc object, so the cast to &AnyObject is sound.
+            let any: &AnyObject = unsafe { &*(Retained::as_ptr(&obs) as *const AnyObject) };
+            unsafe { NSNotificationCenter::defaultCenter().removeObserver(any) };
+        }
+        if let Some(c) = self.catcher.take() {
+            c.orderOut(None);
         }
     }
 
@@ -187,16 +293,27 @@ impl Panel {
     }
 
     pub fn show(&mut self, center_x_px: f64) {
+        if self.visible {
+            return; // idempotent: never stack catchers/monitors/observers
+        }
         let mtm = self.mtm;
-        let inner = self.inner.get_or_insert_with(|| Self::build(mtm));
-        Self::position(&inner.window, mtm, center_x_px);
-        inner.window.orderFrontRegardless();
+        // Build (lazily) + position the panel, and grab a window handle.
+        let panel_win = {
+            let inner = self.inner.get_or_insert_with(|| Self::build(mtm));
+            Self::position(&inner.window, mtm, center_x_px);
+            inner.window.clone()
+        };
+        // Click-catcher below, panel key on top.
+        let catcher = Self::build_catcher(mtm);
+        catcher.orderFrontRegardless();
+        panel_win.makeKeyAndOrderFront(None);
+        self.catcher = Some(catcher);
         self.visible = true;
-        self.install_monitor();
+        self.install_dismiss(&panel_win);
     }
 
     pub fn hide(&mut self) {
-        self.remove_monitor();
+        self.remove_dismiss();
         if let Some(inner) = &self.inner {
             inner.window.orderOut(None);
         }
@@ -214,7 +331,7 @@ impl Panel {
     /// Tear down the window + webview, terminating the WebKit processes. Safe to
     /// call repeatedly; a no-op once already released.
     pub fn release(&mut self) {
-        self.remove_monitor();
+        self.remove_dismiss();
         if let Some(inner) = self.inner.take() {
             inner.window.orderOut(None);
             inner.window.setContentView(None); // drop the webview from the window

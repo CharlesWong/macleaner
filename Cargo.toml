@@ -13,7 +13,7 @@ path = "src/main.rs"
 tray-icon = "0.24"
 tao = "0.35"
 objc2 = "0.6"
-objc2-foundation = "0.3"
+objc2-foundation = { version = "0.3", features = ["block2", "NSNotification"] }
 objc2-service-management = "0.3"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
