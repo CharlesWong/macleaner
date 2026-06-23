@@ -32,6 +32,15 @@ dark mode follow the system; menu-bar title refreshes every 60 s.
 > Tip: `MACLEANER_BAR_OPEN=1 macleaner-bar` opens the panel at launch (handy for
 > screenshots / testing) without a status-item click.
 
+### Footprint
+
+The WebView is **built lazily** — only when you first open the panel — and **torn
+down** when the panel closes while idle, so its WebKit processes terminate. A
+menu-bar app launched at login and left untouched therefore holds **zero** WebKit
+processes and sits at ~35 MB (the Rust process alone, ~0 % CPU); WebKit (~25 MB)
+exists only while the panel is actually on screen. The idle title refresh is a
+single 120 s timer.
+
 ## Install (auto-start at login)
 
 ```bash

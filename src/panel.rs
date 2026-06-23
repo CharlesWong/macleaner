@@ -53,18 +53,29 @@ impl Handler {
     }
 }
 
-/// The panel: window + webview + the action channel.
-pub struct Panel {
+/// The live window + webview + action channel. Built lazily on first open and
+/// torn down when the panel is closed while idle, so a never-opened menu-bar app
+/// holds ZERO WebKit processes.
+struct Inner {
     window: Retained<NSPanel>,
     webview: Retained<WKWebView>,
     rx: Receiver<String>,
     _handler: Retained<Handler>,
+}
+
+pub struct Panel {
+    inner: Option<Inner>,
     mtm: MainThreadMarker,
     pub visible: bool,
 }
 
 impl Panel {
     pub fn new(mtm: MainThreadMarker) -> Panel {
+        Panel { inner: None, mtm, visible: false }
+    }
+
+    /// Build the window + webview + bridge (spawns the WebKit processes).
+    fn build(mtm: MainThreadMarker) -> Inner {
         let (tx, rx) = channel::<String>();
         let handler = Handler::new(mtm, tx);
 
@@ -97,6 +108,8 @@ impl Panel {
             false,
         );
         unsafe {
+            // We own the window via `Retained`; don't let close() double-free it.
+            window.setReleasedWhenClosed(false);
             window.setOpaque(false);
             window.setBackgroundColor(Some(&NSColor::clearColor()));
             window.setHasShadow(false);
@@ -108,21 +121,11 @@ impl Panel {
             let _: () = msg_send![&*window, setContentView: &*webview];
         }
 
-        Panel { window, webview, rx, _handler: handler, mtm, visible: false }
+        Inner { window, webview, rx, _handler: handler }
     }
 
-    /// Evaluate a JS snippet in the WebView.
-    pub fn eval(&self, js: &str) {
-        unsafe {
-            self.webview
-                .evaluateJavaScript_completionHandler(&NSString::from_str(js), None);
-        }
-    }
-
-    /// Position the panel under the menu-bar item centered at `center_x_px`
-    /// (screen pixels from the left), just below the menu bar.
-    fn position(&self, center_x_px: f64) {
-        let Some(screen) = NSScreen::mainScreen(self.mtm) else {
+    fn position(window: &NSPanel, mtm: MainThreadMarker, center_x_px: f64) {
+        let Some(screen) = NSScreen::mainScreen(mtm) else {
             return;
         };
         let vf = screen.visibleFrame();
@@ -138,17 +141,32 @@ impl Panel {
             x = min_x;
         }
         let y = vf.origin.y + vf.size.height - WIN_H - 2.0;
-        self.window.setFrameOrigin(NSPoint::new(x, y));
+        window.setFrameOrigin(NSPoint::new(x, y));
+    }
+
+    /// Evaluate a JS snippet in the WebView (no-op if the panel isn't built).
+    pub fn eval(&self, js: &str) {
+        if let Some(inner) = &self.inner {
+            unsafe {
+                inner
+                    .webview
+                    .evaluateJavaScript_completionHandler(&NSString::from_str(js), None);
+            }
+        }
     }
 
     pub fn show(&mut self, center_x_px: f64) {
-        self.position(center_x_px);
-        self.window.orderFrontRegardless();
+        let mtm = self.mtm;
+        let inner = self.inner.get_or_insert_with(|| Self::build(mtm));
+        Self::position(&inner.window, mtm, center_x_px);
+        inner.window.orderFrontRegardless();
         self.visible = true;
     }
 
     pub fn hide(&mut self) {
-        self.window.orderOut(None);
+        if let Some(inner) = &self.inner {
+            inner.window.orderOut(None);
+        }
         self.visible = false;
     }
 
@@ -160,8 +178,26 @@ impl Panel {
         }
     }
 
+    /// Tear down the window + webview, terminating the WebKit processes. Safe to
+    /// call repeatedly; a no-op once already released.
+    pub fn release(&mut self) {
+        if let Some(inner) = self.inner.take() {
+            inner.window.orderOut(None);
+            inner.window.setContentView(None); // drop the webview from the window
+            // `inner` (window, webview, handler, rx) is dropped here.
+        }
+    }
+
+    /// Whether the WebView is currently built (for measuring / tests).
+    pub fn is_built(&self) -> bool {
+        self.inner.is_some()
+    }
+
     /// Drain any actions the WebView posted since the last poll.
     pub fn poll_actions(&self) -> Vec<String> {
-        self.rx.try_iter().collect()
+        match &self.inner {
+            Some(inner) => inner.rx.try_iter().collect(),
+            None => Vec::new(),
+        }
     }
 }

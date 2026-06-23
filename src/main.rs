@@ -86,7 +86,7 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
         free_before: 0,
         results: None,
     };
-    let mut next_refresh = Instant::now() + Duration::from_secs(60);
+    let mut next_refresh = Instant::now() + Duration::from_secs(120);
 
     event_loop.run(move |_event, _target, control_flow| {
         *control_flow = ControlFlow::WaitUntil(next_refresh);
@@ -95,7 +95,7 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
         if Instant::now() >= next_refresh {
             let f = disk::free_gb(&home).unwrap_or(0);
             tray.set_title(Some(ui::title(f, state::read_min_free_gb(&home))));
-            next_refresh = Instant::now() + Duration::from_secs(60);
+            next_refresh = Instant::now() + Duration::from_secs(120);
         }
 
         // status-item clicks toggle the panel
@@ -109,9 +109,8 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
             {
                 let cx = rect.position.x + rect.size.width as f64 / 2.0;
                 panel.toggle(cx);
-                if panel.visible {
-                    send_state(&panel, &home);
-                }
+                // A freshly built panel requests its state via the 'ready'
+                // message once its HTML loads, so no eager send_state is needed.
             }
         }
 
@@ -146,6 +145,13 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
 
         // drive the cleaning animation
         tick_clean(&panel, &mut clean, control_flow);
+
+        // Footprint: once the panel is closed and nothing is cleaning, tear down
+        // the WebView so its WebKit XPC processes terminate (idle ≈ 38 MB, no
+        // WebKit). Rebuilt on the next open.
+        if panel.is_built() && !panel.visible && clean.phase == 0 {
+            panel.release();
+        }
     });
 }
 
