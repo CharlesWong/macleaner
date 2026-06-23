@@ -3,11 +3,14 @@
 //! the WebView's buttons reach Rust. All calls here run on the main thread.
 
 use crate::bridge::PANEL_HTML;
+use block2::RcBlock;
+use core::ptr::NonNull;
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSPanel, NSScreen, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSPanel, NSScreen, NSWindowCollectionBehavior,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSObject, NSObjectProtocol, NSNumber, NSPoint, NSRect, NSSize, NSString,
@@ -17,6 +20,7 @@ use objc2_web_kit::{
     WKWebViewConfiguration,
 };
 use std::sync::mpsc::{channel, Receiver, Sender};
+use tao::event_loop::EventLoopProxy;
 
 const WIN_W: f64 = 332.0;
 const WIN_H: f64 = 540.0;
@@ -66,12 +70,39 @@ struct Inner {
 pub struct Panel {
     inner: Option<Inner>,
     mtm: MainThreadMarker,
+    /// Wakes the event loop (with `()`) when a click outside the app dismisses
+    /// the panel, so the loop hides + tears it down promptly.
+    proxy: EventLoopProxy<()>,
+    /// The active global click-outside monitor (only while visible).
+    monitor: Option<Retained<AnyObject>>,
     pub visible: bool,
 }
 
 impl Panel {
-    pub fn new(mtm: MainThreadMarker) -> Panel {
-        Panel { inner: None, mtm, visible: false }
+    pub fn new(mtm: MainThreadMarker, proxy: EventLoopProxy<()>) -> Panel {
+        Panel { inner: None, mtm, proxy, monitor: None, visible: false }
+    }
+
+    /// Install a global monitor that fires on any mouse-down OUTSIDE our app
+    /// (global monitors never see our own windows), waking the loop to dismiss.
+    fn install_monitor(&mut self) {
+        if self.monitor.is_some() {
+            return;
+        }
+        let proxy = self.proxy.clone();
+        let block = RcBlock::new(move |_event: NonNull<NSEvent>| {
+            let _ = proxy.send_event(());
+        });
+        let mask = NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown;
+        self.monitor = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &block);
+    }
+
+    fn remove_monitor(&mut self) {
+        if let Some(m) = self.monitor.take() {
+            // SAFETY: `m` was returned by addGlobalMonitorForEvents…; removing it
+            // exactly once is correct.
+            unsafe { NSEvent::removeMonitor(&m) };
+        }
     }
 
     /// Build the window + webview + bridge (spawns the WebKit processes).
@@ -161,9 +192,11 @@ impl Panel {
         Self::position(&inner.window, mtm, center_x_px);
         inner.window.orderFrontRegardless();
         self.visible = true;
+        self.install_monitor();
     }
 
     pub fn hide(&mut self) {
+        self.remove_monitor();
         if let Some(inner) = &self.inner {
             inner.window.orderOut(None);
         }
@@ -181,6 +214,7 @@ impl Panel {
     /// Tear down the window + webview, terminating the WebKit processes. Safe to
     /// call repeatedly; a no-op once already released.
     pub fn release(&mut self) {
+        self.remove_monitor();
         if let Some(inner) = self.inner.take() {
             inner.window.orderOut(None);
             inner.window.setContentView(None); // drop the webview from the window

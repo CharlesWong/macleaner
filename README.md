@@ -11,7 +11,9 @@ The menu-bar title is your boot-disk free space, e.g. **🧹 33G** — turning
 
 Clicking the item opens a **native panel** (a borderless, transparent `NSPanel`
 hosting a `WKWebView` that renders the *Macleaner Bar – Native* design, bridged
-to Rust). It has four screens:
+to Rust); clicking the item again, or **clicking anywhere outside the panel**,
+dismisses it (a global mouse-down monitor wakes the loop to hide + tear it down),
+like a normal status-bar popover. It has four screens:
 
 - **Idle** — a disk-usage ring ("33 GB free" of 256 GB, orange below threshold),
   a health/last-clean line, and **Clean now** · **Preview** · **Open log**

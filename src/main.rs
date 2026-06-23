@@ -21,6 +21,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc::{channel, Sender};
 use std::time::{Duration, Instant};
+use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
@@ -65,7 +66,8 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
     reconcile_login(&cfg);
     let mtm = MainThreadMarker::new().expect("menu-bar app must run on the main thread");
 
-    let event_loop = EventLoopBuilder::new().build();
+    let event_loop = EventLoopBuilder::<()>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
 
     let free = disk::free_gb(&home).unwrap_or(0);
     let min = state::read_min_free_gb(&home);
@@ -74,7 +76,7 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
         .with_tooltip("macleaner")
         .build()?;
 
-    let mut panel = Panel::new(mtm);
+    let mut panel = Panel::new(mtm, proxy);
     // Debug affordance: MACLEANER_BAR_OPEN=1 opens the panel at launch (for
     // screenshots / manual testing) without needing a status-item click.
     if std::env::var_os("MACLEANER_BAR_OPEN").is_some() {
@@ -91,7 +93,15 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
     };
     let mut next_refresh = Instant::now() + Duration::from_secs(120);
 
-    event_loop.run(move |_event, _target, control_flow| {
+    event_loop.run(move |event, _target, control_flow| {
+        // A mouse-down outside the app (delivered as a user event by the global
+        // monitor) dismisses the panel, like a normal status-bar popover.
+        if let Event::UserEvent(()) = event {
+            if panel.visible {
+                panel.hide();
+            }
+        }
+
         *control_flow = ControlFlow::WaitUntil(next_refresh);
 
         // periodic menu-bar title refresh
