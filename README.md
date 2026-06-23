@@ -27,7 +27,21 @@ It is **loosely coupled** to macleaner: it shells out to `~/bin/macleaner`
 `min_free_gb`, and computes free space itself via `statvfs`. It imports nothing
 from macleaner and changes nothing about it. The clean runs on a background
 thread; progress and results return to the WebView on the main thread. Light and
-dark mode follow the system; menu-bar title refreshes every 60 s.
+dark mode follow the system; menu-bar title refreshes every 120 s.
+
+### Memory view
+
+The idle screen has a **Memory** row that opens a safe, user-directed memory
+helper — no snake-oil, no `purge`, no auto-kill. It shows macOS **memory
+pressure** (Normal / Warning / Critical, from
+`kern.memorystatus_vm_pressure_level`), **swap used**, and the **top
+memory-consuming apps** (helper processes summed under their parent app, via
+`ps`). Tick the apps you don't need and **Quit selected** — that sends a graceful
+`SIGTERM` to each app's *main* process only. Guards: the kill path independently
+re-resolves every pid and re-checks it, so it can never target `pid <= 1`, its
+own process, or a critical system process (WindowServer / launchd / Dock / …).
+On macOS, quitting the biggest apps is the only thing that actually relieves
+memory pressure — `purge` just drops the file cache and doesn't touch swap.
 
 > Tip: `MACLEANER_BAR_OPEN=1 macleaner-bar` opens the panel at launch (handy for
 > screenshots / testing) without a status-item click.

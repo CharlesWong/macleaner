@@ -20,6 +20,8 @@ pub enum Action {
     ToggleLogin,
     Done,
     Quit,
+    Mem,
+    QuitPids,
 }
 
 impl Action {
@@ -32,6 +34,8 @@ impl Action {
             "toggleLogin" => Action::ToggleLogin,
             "done" => Action::Done,
             "quit" => Action::Quit,
+            "mem" => Action::Mem,
+            "quitPids" => Action::QuitPids,
             _ => return None,
         })
     }
@@ -195,6 +199,29 @@ pub fn js_toast(text: &str) -> String {
     format!("window.mbToast({});", serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into()))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppRow {
+    pub name: String,
+    pub mb: u64,
+    pub pid: i32,
+    pub killable: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemState {
+    pub level: u8,
+    pub level_label: String,
+    pub swap_gb: String,
+    pub apps: Vec<AppRow>,
+}
+
+/// `window.mbMem({...});`
+pub fn js_mem(m: &MemState) -> String {
+    format!("window.mbMem({});", serde_json::to_string(m).unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,6 +244,8 @@ mod tests {
         assert_eq!(Action::parse("done"), Some(Action::Done));
         assert_eq!(Action::parse("quit"), Some(Action::Quit));
         assert_eq!(Action::parse("ready"), Some(Action::Ready));
+        assert_eq!(Action::parse("mem"), Some(Action::Mem));
+        assert_eq!(Action::parse("quitPids"), Some(Action::QuitPids));
         assert_eq!(Action::parse("bogus"), None);
     }
 
@@ -257,7 +286,7 @@ mod tests {
 
     #[test]
     fn panel_html_has_anchors_ac5() {
-        for id in ["screen-idle", "screen-cleaning", "screen-results", "screen-onboarding"] {
+        for id in ["screen-idle", "screen-cleaning", "screen-results", "screen-onboarding", "screen-memory"] {
             assert!(PANEL_HTML.contains(&format!("id=\"{id}\"")), "missing {id}");
         }
         assert!(PANEL_HTML.contains("webkit.messageHandlers"));

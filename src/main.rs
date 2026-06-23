@@ -7,6 +7,7 @@ mod bridge;
 mod bundle;
 mod disk;
 mod loginitem;
+mod mem;
 mod panel;
 mod state;
 mod ui;
@@ -39,6 +40,8 @@ fn main() -> anyhow::Result<()> {
 #[derive(Deserialize)]
 struct Msg {
     action: String,
+    #[serde(default)]
+    pids: Vec<i32>,
 }
 
 /// Messages from the background clean/preview threads back to the main loop.
@@ -213,6 +216,11 @@ fn handle_action(
     };
     match action {
         Action::Ready | Action::Done => send_state(panel, home),
+        Action::Mem => send_mem(panel),
+        Action::QuitPids => {
+            mem::quit_pids(&msg.pids);
+            send_mem(panel);
+        }
         Action::OpenLog => actions::open_log(home),
         Action::ToggleLogin => {
             toggle_login_intent(home);
@@ -263,6 +271,21 @@ fn send_state(panel: &Panel, home: &Path) {
         accent: "#0a84ff".into(),
     };
     panel.eval(&bridge::js_state(&st));
+}
+
+fn send_mem(panel: &Panel) {
+    let level = mem::pressure_level();
+    let apps = mem::top_consumers(8)
+        .into_iter()
+        .map(|a| bridge::AppRow { name: a.name, mb: a.mb, pid: a.pid, killable: a.killable })
+        .collect();
+    let m = bridge::MemState {
+        level,
+        level_label: mem::pressure_label(level).to_string(),
+        swap_gb: format!("{:.1}", mem::swap_used_gb()),
+        apps,
+    };
+    panel.eval(&bridge::js_mem(&m));
 }
 
 fn toggle_login_intent(home: &Path) {

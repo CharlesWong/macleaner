@@ -84,6 +84,27 @@
     <div class="row"><span style="flex:1;">Start at login</span>
       <div id="sw" class="sw" onclick="act('toggleLogin')"><div id="knob" class="knob"></div></div>
     </div>
+    <div class="div"></div>
+    <div class="row" style="cursor:pointer;" onclick="act('mem')">
+      <span style="flex:1;">Memory</span><span style="color:var(--muted);">&rsaquo;</span>
+    </div>
+  </div>
+
+  <!-- MEMORY -->
+  <div id="screen-memory" class="hidden">
+    <div style="padding:14px 16px 4px;display:flex;align-items:center;gap:8px;">
+      <span id="mem-dot" class="dot" style="background:#34c759;"></span>
+      <span style="font-size:13px;font-weight:600;" id="mem-level">—</span>
+      <div style="flex:1;"></div>
+      <span class="sub" id="mem-swap">— GB swap</span>
+    </div>
+    <div class="sub" style="padding:0 16px 6px;">Top memory by app — tick to quit (graceful SIGTERM).</div>
+    <div id="mem-list" style="padding:0 10px;max-height:236px;overflow-y:auto;"></div>
+    <div class="div" style="margin-top:4px;"></div>
+    <div style="padding:10px 14px 14px;display:flex;gap:8px;">
+      <button class="btn btn-2" style="flex:1;height:36px;" onclick="act('ready')">Back</button>
+      <button id="mem-quit" class="btn btn-primary" style="flex:1;height:36px;opacity:.5;" onclick="quitSelected()">Quit selected</button>
+    </div>
   </div>
 
   <!-- CLEANING -->
@@ -152,13 +173,45 @@
 
 <script>
   var $ = function(id){ return document.getElementById(id); };
-  var SCREENS = ['idle','cleaning','results','onboarding'];
+  var SCREENS = ['idle','cleaning','results','onboarding','memory'];
   function show(name){ SCREENS.forEach(function(s){ $('screen-'+s).classList.toggle('hidden', s!==name); }); }
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 
   function act(action){
     if(action==='cleanNow'){ show('cleaning'); setProgress({pct:0,reclaimed:'0.0',label:'caches'}); }
+    if(action==='mem'){ show('memory'); }
     try{ window.webkit.messageHandlers.macleaner.postMessage(JSON.stringify({action:action})); }catch(e){}
   }
+
+  function updateQuit(){
+    var n = document.querySelectorAll('#mem-list input:checked').length;
+    var b = $('mem-quit');
+    b.style.opacity = n ? '1' : '.5';
+    b.textContent = n ? ('Quit ' + n + ' selected') : 'Quit selected';
+  }
+  function quitSelected(){
+    var pids = [];
+    document.querySelectorAll('#mem-list input:checked').forEach(function(c){ pids.push(parseInt(c.getAttribute('data-pid'),10)); });
+    if(!pids.length) return;
+    try{ window.webkit.messageHandlers.macleaner.postMessage(JSON.stringify({action:'quitPids', pids:pids})); }catch(e){}
+  }
+  window.mbMem = function(m){
+    show('memory');
+    $('mem-dot').style.background = m.level===4 ? '#ff3b30' : (m.level===2 ? '#ff9f0a' : '#34c759');
+    $('mem-level').textContent = (m.levelLabel||'') + ' pressure';
+    $('mem-swap').textContent = (m.swapGb||'0') + ' GB swap';
+    var list = $('mem-list'); list.innerHTML = '';
+    (m.apps||[]).forEach(function(a){
+      var mb = a.mb >= 1024 ? (a.mb/1024).toFixed(1) + ' GB' : a.mb + ' MB';
+      var lbl = document.createElement('label');
+      lbl.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 6px;font-size:12.5px;border-radius:7px;' + (a.killable ? 'cursor:pointer;' : 'opacity:.45;');
+      lbl.innerHTML = '<input type="checkbox" data-pid="' + a.pid + '" ' + (a.killable ? '' : 'disabled') + ' onchange="updateQuit()">'
+        + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(a.name) + '</span>'
+        + '<span style="color:var(--muted);font-variant-numeric:tabular-nums;">' + mb + '</span>';
+      list.appendChild(lbl);
+    });
+    updateQuit();
+  };
 
   // ── native → JS ───────────────────────────────────────────────
   window.mbState = function(s){
