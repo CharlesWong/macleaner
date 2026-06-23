@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["daemon", "bar"]
+
+# Profiles only apply from the workspace root, so they live here (not in members).
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
