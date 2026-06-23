@@ -92,13 +92,18 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
         results: None,
     };
     let mut next_refresh = Instant::now() + Duration::from_secs(120);
+    // When the panel was last hidden. Used to debounce the status-item click:
+    // clicking the item resigns the key panel (→ dismiss) AND fires a tray click;
+    // without this the tray click would immediately reopen it.
+    let mut last_hide: Option<Instant> = None;
 
     event_loop.run(move |event, _target, control_flow| {
-        // A mouse-down outside the app (delivered as a user event by the global
-        // monitor) dismisses the panel, like a normal status-bar popover.
+        // The panel resigning key (clicking outside / Cmd-Tab) or Escape is
+        // delivered as a user event → dismiss, like a normal status-bar popover.
         if let Event::UserEvent(()) = event {
             if panel.visible {
                 panel.hide();
+                last_hide = Some(Instant::now());
             }
         }
 
@@ -121,9 +126,19 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
             } = ev
             {
                 let cx = rect.position.x + rect.size.width as f64 / 2.0;
-                panel.toggle(cx);
-                // A freshly built panel requests its state via the 'ready'
-                // message once its HTML loads, so no eager send_state is needed.
+                let just_dismissed = last_hide
+                    .is_some_and(|t| t.elapsed() < Duration::from_millis(350));
+                if !panel.visible && just_dismissed {
+                    // this same click already dismissed the panel (resign-key);
+                    // consume it so the panel doesn't immediately reopen.
+                    last_hide = None;
+                } else if panel.visible {
+                    panel.hide();
+                    last_hide = Some(Instant::now());
+                } else {
+                    // open it (a freshly built panel requests its state via 'ready')
+                    panel.show(cx);
+                }
             }
         }
 

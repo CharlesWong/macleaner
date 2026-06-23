@@ -9,7 +9,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSPanel, NSScreen, NSWindow,
+    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSPanel, NSScreen,
     NSWindowCollectionBehavior, NSWindowDidResignKeyNotification, NSWindowStyleMask,
 };
 use objc2_foundation::{
@@ -51,6 +51,25 @@ define_class!(
     }
 );
 
+define_class!(
+    // A borderless NSPanel returns canBecomeKeyWindow=false by default, so it
+    // could never become key — which broke resign-key dismissal and Escape.
+    // This subclass overrides it so the panel becomes key (still non-activating).
+    #[unsafe(super(NSPanel))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "MacleanerKeyPanel"]
+    struct KeyPanel;
+
+    unsafe impl NSObjectProtocol for KeyPanel {}
+
+    impl KeyPanel {
+        #[unsafe(method(canBecomeKeyWindow))]
+        fn can_become_key_window(&self) -> bool {
+            true
+        }
+    }
+);
+
 impl Handler {
     fn new(mtm: MainThreadMarker, tx: Sender<String>) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(HandlerIvars { tx });
@@ -73,12 +92,9 @@ pub struct Panel {
     mtm: MainThreadMarker,
     /// Wakes the event loop (with `()`) to dismiss the panel.
     proxy: EventLoopProxy<()>,
-    /// Local event monitors (Escape key + outside-click) active while visible.
+    /// Local event monitor (Escape key) active while visible.
     monitors: Vec<Retained<AnyObject>>,
-    /// Transparent full-screen window that catches outside clicks so they become
-    /// our-app events (the local monitor then dismisses + swallows them).
-    catcher: Option<Retained<NSWindow>>,
-    /// resign-key observer handle (dismiss on Cmd-Tab / app switch).
+    /// resign-key observer handle (dismiss on outside click / Cmd-Tab).
     observer: Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
     pub visible: bool,
 }
@@ -88,48 +104,13 @@ const KEY_ESCAPE: u16 = 53;
 
 impl Panel {
     pub fn new(mtm: MainThreadMarker, proxy: EventLoopProxy<()>) -> Panel {
-        Panel {
-            inner: None,
-            mtm,
-            proxy,
-            monitors: Vec::new(),
-            catcher: None,
-            observer: None,
-            visible: false,
-        }
+        Panel { inner: None, mtm, proxy, monitors: Vec::new(), observer: None, visible: false }
     }
 
-    /// A transparent, click-catching window covering all displays, sitting just
-    /// below the panel. Invisible; its only job is to receive (and let us
-    /// swallow) clicks outside the panel.
-    fn build_catcher(mtm: MainThreadMarker) -> Retained<NSWindow> {
-        let frame = NSRect::new(NSPoint::new(-5000.0, -5000.0), NSSize::new(20000.0, 20000.0));
-        let w = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                mtm.alloc(),
-                frame,
-                NSWindowStyleMask::Borderless,
-                NSBackingStoreType::Buffered,
-                false,
-            )
-        };
-        unsafe {
-            w.setReleasedWhenClosed(false);
-            w.setOpaque(false);
-            w.setBackgroundColor(Some(&NSColor::clearColor()));
-            w.setHasShadow(false);
-            w.setIgnoresMouseEvents(false);
-            w.setLevel(24); // just below the panel's status level (25)
-        }
-        w
-    }
-
-    /// Install the three dismiss triggers: Escape, outside-click (swallowed via
-    /// the catcher + a local monitor), and resign-key (app switch).
+    /// Install the dismiss triggers: Escape (local key monitor) and resign-key
+    /// (the panel is key, so clicking outside / Cmd-Tab resigns it → dismiss).
     fn install_dismiss(&mut self, panel_win: &Retained<NSPanel>) {
-        let mtm = self.mtm;
-
-        // Escape key → dismiss + swallow.
+        // Escape key → dismiss + swallow the key.
         let p_key = self.proxy.clone();
         let key_block = RcBlock::new(move |ev: NonNull<NSEvent>| -> *mut NSEvent {
             let e = unsafe { ev.as_ref() };
@@ -145,37 +126,8 @@ impl Panel {
             self.monitors.push(m);
         }
 
-        // Mouse-down: clicks inside the panel pass through; clicks on the catcher
-        // (any other of our windows) dismiss AND are swallowed (return null); a
-        // window-less event is ambiguous → pass through (never dismiss on it).
-        let p_mouse = self.proxy.clone();
-        let pw = panel_win.clone();
-        let mouse_block = RcBlock::new(move |ev: NonNull<NSEvent>| -> *mut NSEvent {
-            let e = unsafe { ev.as_ref() };
-            match e.window(mtm) {
-                Some(w)
-                    if ptr::eq(
-                        Retained::as_ptr(&w) as *const (),
-                        Retained::as_ptr(&pw) as *const (),
-                    ) =>
-                {
-                    ev.as_ptr() // on the panel → pass through
-                }
-                Some(_) => {
-                    let _ = p_mouse.send_event(()); // on the catcher → dismiss
-                    ptr::null_mut() // …and swallow the click
-                }
-                None => ev.as_ptr(), // no window → ambiguous, don't dismiss
-            }
-        });
-        let mmask = NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown;
-        if let Some(m) =
-            unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mmask, &mouse_block) }
-        {
-            self.monitors.push(m);
-        }
-
-        // resign-key (Cmd-Tab / clicking another app) → dismiss. Filtered to OUR
+        // resign-key: the panel is key, so clicking another app/window or the
+        // desktop, or Cmd-Tab, resigns its key status → dismiss. Filtered to OUR
         // panel window so an unrelated window losing key never dismisses us.
         let p_obs = self.proxy.clone();
         let obs_block = RcBlock::new(move |_n: NonNull<NSNotification>| {
@@ -206,9 +158,6 @@ impl Panel {
             let any: &AnyObject = unsafe { &*(Retained::as_ptr(&obs) as *const AnyObject) };
             unsafe { NSNotificationCenter::defaultCenter().removeObserver(any) };
         }
-        if let Some(c) = self.catcher.take() {
-            c.orderOut(None);
-        }
     }
 
     /// Build the window + webview + bridge (spawns the WebKit processes).
@@ -237,13 +186,18 @@ impl Panel {
         }
 
         let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel;
-        let window = NSPanel::initWithContentRect_styleMask_backing_defer(
-            mtm.alloc(),
-            frame,
-            style,
-            NSBackingStoreType::Buffered,
-            false,
-        );
+        // Instantiate the key-capable subclass via NSPanel's designated
+        // initializer (return type must match the alloc's class), then upcast.
+        let kp: Retained<KeyPanel> = unsafe {
+            msg_send![
+                KeyPanel::alloc(mtm),
+                initWithContentRect: frame,
+                styleMask: style,
+                backing: NSBackingStoreType::Buffered,
+                defer: false
+            ]
+        };
+        let window: Retained<NSPanel> = kp.into_super();
         unsafe {
             // We own the window via `Retained`; don't let close() double-free it.
             window.setReleasedWhenClosed(false);
@@ -303,11 +257,8 @@ impl Panel {
             Self::position(&inner.window, mtm, center_x_px);
             inner.window.clone()
         };
-        // Click-catcher below, panel key on top.
-        let catcher = Self::build_catcher(mtm);
-        catcher.orderFrontRegardless();
+        // Make the panel key (non-activating) so resign-key dismisses it.
         panel_win.makeKeyAndOrderFront(None);
-        self.catcher = Some(catcher);
         self.visible = true;
         self.install_dismiss(&panel_win);
     }
@@ -318,14 +269,6 @@ impl Panel {
             inner.window.orderOut(None);
         }
         self.visible = false;
-    }
-
-    pub fn toggle(&mut self, center_x_px: f64) {
-        if self.visible {
-            self.hide();
-        } else {
-            self.show(center_x_px);
-        }
     }
 
     /// Tear down the window + webview, terminating the WebKit processes. Safe to
