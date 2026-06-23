@@ -1,6 +1,3 @@
 /target
 .harness/
 *.log
-# Build-process scaffolding tied to the company/ harness (machine-specific
-# absolute paths; the YAML also self-trips the staged-diff keyword scan).
-deploy/harness/
