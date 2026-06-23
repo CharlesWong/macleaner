@@ -32,44 +32,31 @@ fn run_macleaner(home: &Path, args: &[&str]) -> String {
     }
 }
 
-pub fn run_clean(home: &Path) -> String {
-    run_macleaner(home, &["run", "--force"])
-}
 pub fn run_dry(home: &Path) -> String {
     run_macleaner(home, &["dry-run"])
+}
+
+/// Run macleaner and return its FULL stdout (for parsing the per-cleaner table).
+/// Empty string if the binary is missing or errors.
+pub fn run_capture(home: &Path, args: &[&str]) -> String {
+    let bin = macleaner_bin(home);
+    if !bin.exists() {
+        return String::new();
+    }
+    Command::new(&bin)
+        .args(args)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
 }
 
 pub fn open_log(home: &Path) {
     let _ = Command::new("open").arg(log_path(home)).spawn();
 }
 
-/// Post a macOS notification via osascript.
-pub fn notify(title: &str, message: &str) {
-    let script = format!(
-        "display notification {} with title {}",
-        applescript_quote(message),
-        applescript_quote(title),
-    );
-    let _ = Command::new("osascript").args(["-e", &script]).output();
-}
-
-/// Quote a string as an AppleScript string literal so embedded quotes/backslashes
-/// cannot break out of (or inject into) the `display notification` script.
-fn applescript_quote(s: &str) -> String {
-    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn applescript_quote_escapes() {
-        assert_eq!(applescript_quote("hi"), "\"hi\"");
-        assert_eq!(applescript_quote("a\"b"), "\"a\\\"b\"");
-        assert_eq!(applescript_quote("a\\b"), "\"a\\\\b\"");
-    }
 
     #[test]
     fn paths_are_under_home() {

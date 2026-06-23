@@ -8,24 +8,29 @@ login as a modern SMAppService Login Item.
 
 The menu-bar title is your boot-disk free space, e.g. **🧹 33G** — turning
 **⚠️** red when free space drops below macleaner's `min_free_gb` threshold.
-Clicking opens:
 
-```
-Free: 33 GB
-Last clean: 2h ago
-─────────────
-Clean now        → macleaner run --force, then a notification with the result
-Dry-run          → macleaner dry-run, notification with "would reclaim …"
-Open log         → opens ~/Library/Logs/macleaner/macleaner.log
-─────────────
-Start at login ✓ (toggle)
-Quit
-```
+Clicking the item opens a **native panel** (a borderless, transparent `NSPanel`
+hosting a `WKWebView` that renders the *Macleaner Bar – Native* design, bridged
+to Rust). It has four screens:
 
-It refreshes every 60 s. It is **loosely coupled** to macleaner: it shells out to
-`~/bin/macleaner`, reads macleaner's last-run timestamp and `min_free_gb`, and
-computes free space itself via `statvfs`. It imports nothing from macleaner and
-changes nothing about it.
+- **Idle** — a disk-usage ring ("33 GB free" of 256 GB, orange below threshold),
+  a health/last-clean line, and **Clean now** · **Preview** · **Open log**
+  buttons plus a **Start at login** toggle.
+- **Cleaning** — a spinning ring with live percent, the cleaner being pruned, the
+  reclaimed total, and a progress bar (shown while `macleaner run --force` runs).
+- **Results** — "reclaimed +N GB", "Free space now NN GB · up from MM GB", and a
+  caches / trash / logs breakdown.
+- **First-run onboarding** — what it does and a safe-preview entry point.
+
+It is **loosely coupled** to macleaner: it shells out to `~/bin/macleaner`
+(`run --force`, `dry-run`), reads macleaner's last-run timestamp and
+`min_free_gb`, and computes free space itself via `statvfs`. It imports nothing
+from macleaner and changes nothing about it. The clean runs on a background
+thread; progress and results return to the WebView on the main thread. Light and
+dark mode follow the system; menu-bar title refreshes every 60 s.
+
+> Tip: `MACLEANER_BAR_OPEN=1 macleaner-bar` opens the panel at launch (handy for
+> screenshots / testing) without a status-item click.
 
 ## Install (auto-start at login)
 
@@ -49,12 +54,16 @@ that, and it appears under **System Settings → General → Login Items**.
 ## Development
 
 ```bash
-cargo test                          # 14 unit tests (every acceptance criterion)
+cargo test                          # 19 unit tests (every acceptance criterion)
 cargo clippy --all-targets -- -D warnings
 cargo build --release
 ```
 
-Stack: `tray-icon` + `tao` (menu bar + event loop), `objc2-service-management`
-(SMAppService), `statvfs` for free space. Built under the `company/` checklist
-harness (spec → build → ship) with real cargo gates and an adversarial commit
-critic. See [`deploy/README.md`](deploy/README.md) for install details.
+Stack: `tray-icon` + `tao` (status item + event loop), `objc2-app-kit` +
+`objc2-web-kit` (the transparent `NSPanel` + `WKWebView` + a
+`WKScriptMessageHandler` bridge), `objc2-service-management` (SMAppService),
+`statvfs` for free space. The panel UI is `src/panel.html`, rendered in the
+WebView and driven by the Rust bridge in `src/bridge.rs`. Built under the
+`company/` checklist harness (spec → build → ship) with real cargo gates and an
+adversarial commit critic. See [`deploy/README.md`](deploy/README.md) for install
+details.

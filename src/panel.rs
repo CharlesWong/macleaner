@@ -1,0 +1,167 @@
+//! The native panel: a borderless, transparent `NSPanel` hosting a `WKWebView`
+//! that renders `bridge::PANEL_HTML`, with a `WKScriptMessageHandler` bridge so
+//! the WebView's buttons reach Rust. All calls here run on the main thread.
+
+use crate::bridge::PANEL_HTML;
+use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
+use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2_app_kit::{
+    NSBackingStoreType, NSColor, NSPanel, NSScreen, NSWindowCollectionBehavior, NSWindowStyleMask,
+};
+use objc2_foundation::{
+    NSObject, NSObjectProtocol, NSNumber, NSPoint, NSRect, NSSize, NSString,
+};
+use objc2_web_kit::{
+    WKScriptMessage, WKScriptMessageHandler, WKUserContentController, WKWebView,
+    WKWebViewConfiguration,
+};
+use std::sync::mpsc::{channel, Receiver, Sender};
+
+const WIN_W: f64 = 332.0;
+const WIN_H: f64 = 540.0;
+
+/// Ivars for the JS→native message handler: a channel carrying raw JSON bodies.
+struct HandlerIvars {
+    tx: Sender<String>,
+}
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "MacleanerMsgHandler"]
+    #[ivars = HandlerIvars]
+    struct Handler;
+
+    unsafe impl NSObjectProtocol for Handler {}
+
+    unsafe impl WKScriptMessageHandler for Handler {
+        #[unsafe(method(userContentController:didReceiveScriptMessage:))]
+        fn did_receive(&self, _ucc: &WKUserContentController, message: &WKScriptMessage) {
+            let body = unsafe { message.body() };
+            if let Ok(s) = body.downcast::<NSString>() {
+                let _ = self.ivars().tx.send(s.to_string());
+            }
+        }
+    }
+);
+
+impl Handler {
+    fn new(mtm: MainThreadMarker, tx: Sender<String>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(HandlerIvars { tx });
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// The panel: window + webview + the action channel.
+pub struct Panel {
+    window: Retained<NSPanel>,
+    webview: Retained<WKWebView>,
+    rx: Receiver<String>,
+    _handler: Retained<Handler>,
+    mtm: MainThreadMarker,
+    pub visible: bool,
+}
+
+impl Panel {
+    pub fn new(mtm: MainThreadMarker) -> Panel {
+        let (tx, rx) = channel::<String>();
+        let handler = Handler::new(mtm, tx);
+
+        let config = unsafe { WKWebViewConfiguration::new(mtm) };
+        let ucc: Retained<WKUserContentController> = unsafe { config.userContentController() };
+        unsafe {
+            ucc.addScriptMessageHandler_name(
+                ProtocolObject::from_ref(&*handler),
+                &NSString::from_str("macleaner"),
+            );
+        }
+
+        let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(WIN_W, WIN_H));
+        let webview =
+            unsafe { WKWebView::initWithFrame_configuration(mtm.alloc(), frame, &config) };
+        // Transparent WebView so the HTML card's own rounded corners + shadow show.
+        let no = NSNumber::numberWithBool(false);
+        let draws_key = NSString::from_str("drawsBackground");
+        unsafe {
+            let _: () = msg_send![&*webview, setValue: &*no, forKey: &*draws_key];
+            webview.loadHTMLString_baseURL(&NSString::from_str(PANEL_HTML), None);
+        }
+
+        let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel;
+        let window = NSPanel::initWithContentRect_styleMask_backing_defer(
+            mtm.alloc(),
+            frame,
+            style,
+            NSBackingStoreType::Buffered,
+            false,
+        );
+        unsafe {
+            window.setOpaque(false);
+            window.setBackgroundColor(Some(&NSColor::clearColor()));
+            window.setHasShadow(false);
+            window.setLevel(25); // status-window level
+            window.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary,
+            );
+            let _: () = msg_send![&*window, setContentView: &*webview];
+        }
+
+        Panel { window, webview, rx, _handler: handler, mtm, visible: false }
+    }
+
+    /// Evaluate a JS snippet in the WebView.
+    pub fn eval(&self, js: &str) {
+        unsafe {
+            self.webview
+                .evaluateJavaScript_completionHandler(&NSString::from_str(js), None);
+        }
+    }
+
+    /// Position the panel under the menu-bar item centered at `center_x_px`
+    /// (screen pixels from the left), just below the menu bar.
+    fn position(&self, center_x_px: f64) {
+        let Some(screen) = NSScreen::mainScreen(self.mtm) else {
+            return;
+        };
+        let vf = screen.visibleFrame();
+        let scale = screen.backingScaleFactor();
+        let center_x_pt = center_x_px / scale.max(1.0);
+        let mut x = center_x_pt - WIN_W / 2.0;
+        let max_x = vf.origin.x + vf.size.width - WIN_W - 6.0;
+        let min_x = vf.origin.x + 6.0;
+        if x > max_x {
+            x = max_x;
+        }
+        if x < min_x {
+            x = min_x;
+        }
+        let y = vf.origin.y + vf.size.height - WIN_H - 2.0;
+        self.window.setFrameOrigin(NSPoint::new(x, y));
+    }
+
+    pub fn show(&mut self, center_x_px: f64) {
+        self.position(center_x_px);
+        self.window.orderFrontRegardless();
+        self.visible = true;
+    }
+
+    pub fn hide(&mut self) {
+        self.window.orderOut(None);
+        self.visible = false;
+    }
+
+    pub fn toggle(&mut self, center_x_px: f64) {
+        if self.visible {
+            self.hide();
+        } else {
+            self.show(center_x_px);
+        }
+    }
+
+    /// Drain any actions the WebView posted since the last poll.
+    pub fn poll_actions(&self) -> Vec<String> {
+        self.rx.try_iter().collect()
+    }
+}
