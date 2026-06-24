@@ -1,0 +1,39 @@
+name: Bug report
+description: Something went wrong with the daemon or the menu-bar app
+labels: [bug]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which part?
+      options:
+        - macleaner (the daily cleaner daemon)
+        - macleaner-bar (the menu-bar app)
+        - install / launchd / login item
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version + chip (Apple Silicon / Intel)
+      placeholder: "e.g. 26.5.1, Apple Silicon"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: e.g. `macleaner status`, or tail of `~/Library/Logs/macleaner/macleaner.log`
+      render: shell

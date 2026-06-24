@@ -2,7 +2,11 @@
 
 /// Menu-bar title: free space with a warning glyph when below the threshold.
 pub fn title(free_gb: u64, min_free_gb: u64) -> String {
-    let glyph = if free_gb < min_free_gb { "⚠️" } else { "🧹" };
+    let glyph = if free_gb < min_free_gb {
+        "⚠️"
+    } else {
+        "🧹"
+    };
     format!("{glyph} {free_gb}G")
 }
 

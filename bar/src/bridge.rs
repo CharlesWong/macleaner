@@ -184,19 +184,31 @@ pub struct ResultsPayload {
 
 /// `window.mbState({...});`
 pub fn js_state(s: &PanelState) -> String {
-    format!("window.mbState({});", serde_json::to_string(s).unwrap_or_default())
+    format!(
+        "window.mbState({});",
+        serde_json::to_string(s).unwrap_or_default()
+    )
 }
 /// `window.mbProgress({...});`
 pub fn js_progress(p: &Progress) -> String {
-    format!("window.mbProgress({});", serde_json::to_string(p).unwrap_or_default())
+    format!(
+        "window.mbProgress({});",
+        serde_json::to_string(p).unwrap_or_default()
+    )
 }
 /// `window.mbResults({...});`
 pub fn js_results(r: &ResultsPayload) -> String {
-    format!("window.mbResults({});", serde_json::to_string(r).unwrap_or_default())
+    format!(
+        "window.mbResults({});",
+        serde_json::to_string(r).unwrap_or_default()
+    )
 }
 /// `window.mbToast("…");` (string safely JSON-escaped).
 pub fn js_toast(text: &str) -> String {
-    format!("window.mbToast({});", serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into()))
+    format!(
+        "window.mbToast({});",
+        serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into())
+    )
 }
 
 #[derive(Serialize)]
@@ -219,7 +231,10 @@ pub struct MemState {
 
 /// `window.mbMem({...});`
 pub fn js_mem(m: &MemState) -> String {
-    format!("window.mbMem({});", serde_json::to_string(m).unwrap_or_default())
+    format!(
+        "window.mbMem({});",
+        serde_json::to_string(m).unwrap_or_default()
+    )
 }
 
 #[cfg(test)]
@@ -286,7 +301,13 @@ mod tests {
 
     #[test]
     fn panel_html_has_anchors_ac5() {
-        for id in ["screen-idle", "screen-cleaning", "screen-results", "screen-onboarding", "screen-memory"] {
+        for id in [
+            "screen-idle",
+            "screen-cleaning",
+            "screen-results",
+            "screen-onboarding",
+            "screen-memory",
+        ] {
             assert!(PANEL_HTML.contains(&format!("id=\"{id}\"")), "missing {id}");
         }
         assert!(PANEL_HTML.contains("webkit.messageHandlers"));

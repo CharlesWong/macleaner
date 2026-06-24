@@ -14,7 +14,11 @@ use runner::RunOpts;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
-#[command(name = "macleaner", version, about = "Safe, idempotent daily macOS disk cleaner")]
+#[command(
+    name = "macleaner",
+    version,
+    about = "Safe, idempotent daily macOS disk cleaner"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -59,7 +63,14 @@ fn cmd_run(home: &std::path::Path, force: bool) -> anyhow::Result<()> {
     // Safety: the very first invocation on a fresh install is a no-delete
     // preview, then marks itself initialized so scheduled runs clean normally.
     if !force && runner::read_last_run(home).is_none() {
-        if let Some(rep) = runner::execute(&cfg, home, &RunOpts { dry_run: true, force: false })? {
+        if let Some(rep) = runner::execute(
+            &cfg,
+            home,
+            &RunOpts {
+                dry_run: true,
+                force: false,
+            },
+        )? {
             print!("{}", rep.render());
         }
         runner::write_last_run(home, SystemTime::now())?;
@@ -70,16 +81,32 @@ fn cmd_run(home: &std::path::Path, force: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    match runner::execute(&cfg, home, &RunOpts { dry_run: false, force })? {
+    match runner::execute(
+        &cfg,
+        home,
+        &RunOpts {
+            dry_run: false,
+            force,
+        },
+    )? {
         Some(rep) => print!("{}", rep.render()),
-        None => println!("macleaner: nothing to do (disabled, or already ran within the guard window)."),
+        None => {
+            println!("macleaner: nothing to do (disabled, or already ran within the guard window).")
+        }
     }
     Ok(())
 }
 
 fn cmd_dry_run(home: &std::path::Path) -> anyhow::Result<()> {
     let cfg = Config::load(home)?;
-    match runner::execute(&cfg, home, &RunOpts { dry_run: true, force: true })? {
+    match runner::execute(
+        &cfg,
+        home,
+        &RunOpts {
+            dry_run: true,
+            force: true,
+        },
+    )? {
         Some(rep) => print!("{}", rep.render()),
         None => println!("macleaner: disabled in config."),
     }
@@ -91,19 +118,35 @@ fn cmd_status(home: &std::path::Path) -> anyhow::Result<()> {
     let free = disk::free_gb(home).unwrap_or(0);
     println!("macleaner status");
     println!("  enabled:        {}", cfg.enabled);
-    println!("  free space:     {free} GB (sweep below {} GB)", cfg.min_free_gb);
-    println!("  schedule:       daily {:02}:{:02}", cfg.schedule_hour, cfg.schedule_minute);
+    println!(
+        "  free space:     {free} GB (sweep below {} GB)",
+        cfg.min_free_gb
+    );
+    println!(
+        "  schedule:       daily {:02}:{:02}",
+        cfg.schedule_hour, cfg.schedule_minute
+    );
     println!("  guard interval: {} h", cfg.min_interval_hours);
     match runner::read_last_run(home) {
         Some(t) => {
             let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-            let ago = SystemTime::now().duration_since(t).map(|d| d.as_secs() / 3600).unwrap_or(0);
+            let ago = SystemTime::now()
+                .duration_since(t)
+                .map(|d| d.as_secs() / 3600)
+                .unwrap_or(0);
             println!("  last run:       {secs} (epoch s, ~{ago} h ago)");
         }
         None => println!("  last run:       never"),
     }
     let installed = launchd::plist_path(home).exists();
-    println!("  launchd agent:  {}", if installed { "installed" } else { "not installed" });
+    println!(
+        "  launchd agent:  {}",
+        if installed {
+            "installed"
+        } else {
+            "not installed"
+        }
+    );
     println!("  config file:    {}", config::config_path(home).display());
     println!("  log file:       {}", runner::log_path(home).display());
     Ok(())
@@ -112,7 +155,11 @@ fn cmd_status(home: &std::path::Path) -> anyhow::Result<()> {
 fn cmd_install(home: &std::path::Path) -> anyhow::Result<()> {
     let cfg = Config::load(home)?;
     let (cfg_path, created) = Config::ensure_file(home)?;
-    println!("config: {} ({})", cfg_path.display(), if created { "created" } else { "exists" });
+    println!(
+        "config: {} ({})",
+        cfg_path.display(),
+        if created { "created" } else { "exists" }
+    );
 
     let source = std::env::current_exe()?;
     let steps = launchd::install(home, &source, cfg.schedule_hour, cfg.schedule_minute)?;
@@ -121,7 +168,14 @@ fn cmd_install(home: &std::path::Path) -> anyhow::Result<()> {
     }
 
     println!("\nPreview of the next run (no deletions):");
-    if let Some(rep) = runner::execute(&cfg, home, &RunOpts { dry_run: true, force: true })? {
+    if let Some(rep) = runner::execute(
+        &cfg,
+        home,
+        &RunOpts {
+            dry_run: true,
+            force: true,
+        },
+    )? {
         print!("{}", rep.render());
     }
     println!(
@@ -143,7 +197,11 @@ fn cmd_uninstall(home: &std::path::Path) -> anyhow::Result<()> {
 
 fn cmd_init_config(home: &std::path::Path) -> anyhow::Result<()> {
     let (path, created) = Config::ensure_file(home)?;
-    println!("config {}: {}", if created { "created" } else { "already exists" }, path.display());
+    println!(
+        "config {}: {}",
+        if created { "created" } else { "already exists" },
+        path.display()
+    );
     Ok(())
 }
 

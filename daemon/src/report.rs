@@ -18,13 +18,31 @@ pub struct CleanReport {
 
 impl CleanReport {
     pub fn freed(name: &str, bytes: u64, items: u64) -> Self {
-        Self { name: name.to_string(), bytes, items, skipped: None, error: None }
+        Self {
+            name: name.to_string(),
+            bytes,
+            items,
+            skipped: None,
+            error: None,
+        }
     }
     pub fn skipped(name: &str, why: &str) -> Self {
-        Self { name: name.to_string(), bytes: 0, items: 0, skipped: Some(why.to_string()), error: None }
+        Self {
+            name: name.to_string(),
+            bytes: 0,
+            items: 0,
+            skipped: Some(why.to_string()),
+            error: None,
+        }
     }
     pub fn errored(name: &str, err: &str) -> Self {
-        Self { name: name.to_string(), bytes: 0, items: 0, skipped: None, error: Some(err.to_string()) }
+        Self {
+            name: name.to_string(),
+            bytes: 0,
+            items: 0,
+            skipped: None,
+            error: Some(err.to_string()),
+        }
     }
     /// One-line human summary for stdout/log.
     pub fn line(&self) -> String {
@@ -73,7 +91,11 @@ impl RunReport {
             s.push_str(&r.line());
             s.push('\n');
         }
-        let verb = if self.dry_run { "would reclaim" } else { "reclaimed" };
+        let verb = if self.dry_run {
+            "would reclaim"
+        } else {
+            "reclaimed"
+        };
         s.push_str(&format!(
             "  ── {verb} {} across {} item{}\n",
             format_bytes(self.total_bytes()),

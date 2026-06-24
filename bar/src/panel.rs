@@ -13,7 +13,7 @@ use objc2_app_kit::{
     NSWindowCollectionBehavior, NSWindowDidResignKeyNotification, NSWindowStyleMask,
 };
 use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSNumber, NSPoint, NSRect,
+    NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol, NSPoint, NSRect,
     NSSize, NSString,
 };
 use objc2_web_kit::{
@@ -104,7 +104,14 @@ const KEY_ESCAPE: u16 = 53;
 
 impl Panel {
     pub fn new(mtm: MainThreadMarker, proxy: EventLoopProxy<()>) -> Panel {
-        Panel { inner: None, mtm, proxy, monitors: Vec::new(), observer: None, visible: false }
+        Panel {
+            inner: None,
+            mtm,
+            proxy,
+            monitors: Vec::new(),
+            observer: None,
+            visible: false,
+        }
     }
 
     /// Install the dismiss triggers: Escape (local key monitor) and resign-key
@@ -120,9 +127,9 @@ impl Panel {
             }
             ev.as_ptr()
         });
-        if let Some(m) =
-            unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &key_block) }
-        {
+        if let Some(m) = unsafe {
+            NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &key_block)
+        } {
             self.monitors.push(m);
         }
 
@@ -212,7 +219,12 @@ impl Panel {
             let _: () = msg_send![&*window, setContentView: &*webview];
         }
 
-        Inner { window, webview, rx, _handler: handler }
+        Inner {
+            window,
+            webview,
+            rx,
+            _handler: handler,
+        }
     }
 
     fn position(window: &NSPanel, mtm: MainThreadMarker, center_x_px: f64) {
@@ -278,7 +290,7 @@ impl Panel {
         if let Some(inner) = self.inner.take() {
             inner.window.orderOut(None);
             inner.window.setContentView(None); // drop the webview from the window
-            // `inner` (window, webview, handler, rx) is dropped here.
+                                               // `inner` (window, webview, handler, rx) is dropped here.
         }
     }
 

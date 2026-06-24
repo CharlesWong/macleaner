@@ -38,7 +38,9 @@ pub fn launcher_script() -> String {
 /// a malformed plist (which launchd would silently fail to load). `&` must be
 /// replaced first so the entities it introduces are not re-escaped.
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// The LaunchAgent plist. Runs at load (catch-up after reboot) and daily at
@@ -91,16 +93,26 @@ pub fn plist(launcher: &Path, log: &Path, hour: u32, minute: u32) -> String {
 /// Install the LaunchAgent: copy `source_binary` to `~/bin`, write the launcher
 /// and plist, create the log dir, then (re)load via launchctl. Returns a log of
 /// the steps performed.
-pub fn install(home: &Path, source_binary: &Path, hour: u32, minute: u32) -> anyhow::Result<Vec<String>> {
+pub fn install(
+    home: &Path,
+    source_binary: &Path,
+    hour: u32,
+    minute: u32,
+) -> anyhow::Result<Vec<String>> {
     let mut steps = Vec::new();
     let bin = bin_path(home);
     let launcher = launcher_path(home);
     let plist_p = plist_path(home);
     let log = log_file(home);
 
-    for dir in [bin.parent(), launcher.parent(), plist_p.parent(), log.parent()]
-        .into_iter()
-        .flatten()
+    for dir in [
+        bin.parent(),
+        launcher.parent(),
+        plist_p.parent(),
+        log.parent(),
+    ]
+    .into_iter()
+    .flatten()
     {
         std::fs::create_dir_all(dir)?;
     }
@@ -119,7 +131,11 @@ pub fn install(home: &Path, source_binary: &Path, hour: u32, minute: u32) -> any
     let uid = unsafe { libc::getuid() };
     // Unload any prior instance (ignore failure), then bootstrap the new one.
     let _ = run_launchctl(&["bootout", &format!("gui/{uid}/{LABEL}")]);
-    let out = run_launchctl(&["bootstrap", &format!("gui/{uid}"), &plist_p.to_string_lossy()]);
+    let out = run_launchctl(&[
+        "bootstrap",
+        &format!("gui/{uid}"),
+        &plist_p.to_string_lossy(),
+    ]);
     match out {
         Ok(true) => steps.push(format!("launchctl bootstrap gui/{uid} ✓")),
         Ok(false) | Err(_) => steps.push(
@@ -154,7 +170,11 @@ fn set_executable(p: &Path) -> std::io::Result<()> {
 }
 
 fn run_launchctl(args: &[&str]) -> std::io::Result<bool> {
-    Ok(std::process::Command::new("launchctl").args(args).output()?.status.success())
+    Ok(std::process::Command::new("launchctl")
+        .args(args)
+        .output()?
+        .status
+        .success())
 }
 
 #[cfg(test)]
@@ -183,12 +203,16 @@ mod tests {
 
     #[test]
     fn plist_escapes_xml_special_chars() {
-        // A $HOME containing '&' must not produce malformed XML (red-team finding).
-        let launcher = Path::new("/Users/a&b/bin/macleaner-launcher.sh");
-        let log = Path::new("/Users/a&b/Library/Logs/macleaner/macleaner.log");
+        // A $HOME containing XML metacharacters must not produce malformed XML
+        // (red-team finding). Covers the full xml_escape contract: & < >.
+        let launcher = Path::new("/Users/a&<b>/bin/macleaner-launcher.sh");
+        let log = Path::new("/Users/a&<b>/Library/Logs/macleaner/macleaner.log");
         let xml = plist(launcher, log, 3, 0);
-        assert!(xml.contains("/Users/a&amp;b/bin/macleaner-launcher.sh"));
-        assert!(!xml.contains("a&b/bin"), "no raw unescaped ampersand in the plist");
+        assert!(xml.contains("/Users/a&amp;&lt;b&gt;/bin/macleaner-launcher.sh"));
+        assert!(
+            !xml.contains("a&<b>"),
+            "no raw unescaped &, <, or > in the plist"
+        );
     }
 
     #[test]

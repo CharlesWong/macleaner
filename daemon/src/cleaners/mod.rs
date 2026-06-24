@@ -82,7 +82,10 @@ pub fn prune_dir_by_age(
             continue;
         }
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if exclude_prefixes.iter().any(|p| name.starts_with(p.as_str())) {
+            if exclude_prefixes
+                .iter()
+                .any(|p| name.starts_with(p.as_str()))
+            {
                 continue;
             }
         }
@@ -319,7 +322,10 @@ pub fn build_cleaners(cfg: &Config) -> Vec<Box<dyn Cleaner>> {
         v.push(Box::new(AgeDirCleaner {
             name: "cargo registry".into(),
             tier: Tier::Sweep,
-            roots: vec!["~/.cargo/registry/cache".into(), "~/.cargo/registry/src".into()],
+            roots: vec![
+                "~/.cargo/registry/cache".into(),
+                "~/.cargo/registry/src".into(),
+            ],
             age_days: s.cargo_cache.age_days,
             exclude_prefixes: vec![],
         }));

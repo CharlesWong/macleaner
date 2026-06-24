@@ -24,7 +24,11 @@ pub fn log_path(home: &Path) -> PathBuf {
 
 /// Read the last successful-run timestamp, if any.
 pub fn read_last_run(home: &Path) -> Option<SystemTime> {
-    let secs: u64 = std::fs::read_to_string(state_path(home)).ok()?.trim().parse().ok()?;
+    let secs: u64 = std::fs::read_to_string(state_path(home))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
     Some(UNIX_EPOCH + Duration::from_secs(secs))
 }
 
@@ -50,7 +54,10 @@ pub fn should_run(
     }
     match last {
         None => true,
-        Some(t) => now.duration_since(t).map(|d| d >= min_interval).unwrap_or(true),
+        Some(t) => now
+            .duration_since(t)
+            .map(|d| d >= min_interval)
+            .unwrap_or(true),
     }
 }
 
@@ -77,7 +84,11 @@ pub fn execute(cfg: &Config, home: &Path, opts: &RunOpts) -> anyhow::Result<Opti
     let free_before = free_gb(home).unwrap_or(u64::MAX);
     let swept = free_before < cfg.min_free_gb;
 
-    let ctx = Ctx { dry_run: opts.dry_run, home: home.to_path_buf(), now };
+    let ctx = Ctx {
+        dry_run: opts.dry_run,
+        home: home.to_path_buf(),
+        now,
+    };
     let mut reports = Vec::new();
     for cleaner in build_cleaners(cfg) {
         if cleaner.tier() == Tier::Sweep && !swept {
@@ -92,7 +103,12 @@ pub fn execute(cfg: &Config, home: &Path, opts: &RunOpts) -> anyhow::Result<Opti
         reports.push(cleaner.run(&ctx));
     }
 
-    let report = RunReport { dry_run: opts.dry_run, swept, free_gb_before: free_before, reports };
+    let report = RunReport {
+        dry_run: opts.dry_run,
+        swept,
+        free_gb_before: free_before,
+        reports,
+    };
 
     // Persist the timestamp only for real runs that were not a total failure.
     if !opts.dry_run && report.reports.iter().any(|r| r.error.is_none()) {
@@ -107,8 +123,14 @@ fn append_log(home: &Path, report: &RunReport) -> std::io::Result<()> {
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(p)?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(p)?;
     writeln!(f, "[{stamp}] {}", report.render().replace('\n', " | "))
 }
 
@@ -131,9 +153,20 @@ mod tests {
 
     #[test]
     fn disabled_config_runs_nothing() {
-        let cfg = Config { enabled: false, ..Config::default() };
+        let cfg = Config {
+            enabled: false,
+            ..Config::default()
+        };
         let home = std::env::temp_dir();
-        let out = execute(&cfg, &home, &RunOpts { dry_run: true, force: true }).unwrap();
+        let out = execute(
+            &cfg,
+            &home,
+            &RunOpts {
+                dry_run: true,
+                force: true,
+            },
+        )
+        .unwrap();
         assert!(out.is_none());
     }
 }

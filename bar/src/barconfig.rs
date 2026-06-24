@@ -11,7 +11,9 @@ pub struct BarConfig {
 
 impl Default for BarConfig {
     fn default() -> Self {
-        Self { start_at_login: true }
+        Self {
+            start_at_login: true,
+        }
     }
 }
 
@@ -51,10 +53,15 @@ mod tests {
 
     #[test]
     fn roundtrips() {
-        let home = std::env::temp_dir()
-            .join(format!("mbar-cfg-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+        let home = std::env::temp_dir().join(format!(
+            "mbar-cfg-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
         std::fs::create_dir_all(&home).unwrap();
-        let c = BarConfig { start_at_login: false };
+        let c = BarConfig {
+            start_at_login: false,
+        };
         c.save(&home).unwrap();
         assert!(!BarConfig::load(&home).start_at_login);
         std::fs::remove_dir_all(&home).ok();

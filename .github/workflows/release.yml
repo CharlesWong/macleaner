@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build universal binaries · publish release
+    runs-on: macos-14
+    steps:
+      # Third-party actions are pinned to a full commit SHA (supply-chain
+      # hardening); the trailing comment records the human-readable version.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0 # need history to verify the tag is on main
+
+      - name: Guard — the tag must point at a commit on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main — refusing to publish a release from an unmerged commit."
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      # Mirror the full CI check suite so a force-push / admin-bypass commit on
+      # main can't ship a release that skipped fmt/clippy.
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # Tests run on the host arch (arm64) only; the x86_64 slice below is
+      # cross-built but not unit-tested (a Rosetta test run is slow/flaky and
+      # not worth gating a release on). Its startup is smoke-tested after lipo.
+      - name: Test (gate the release on a green test run)
+        run: cargo test --workspace --locked
+
+      - name: Build universal (arm64 + x86_64) binaries
+        run: |
+          set -euo pipefail
+          cargo build --release --workspace --locked --target aarch64-apple-darwin
+          cargo build --release --workspace --locked --target x86_64-apple-darwin
+          mkdir -p dist
+          for b in macleaner macleaner-bar; do
+            for arch in aarch64-apple-darwin x86_64-apple-darwin; do
+              if [ ! -f "target/$arch/release/$b" ]; then
+                echo "::error::expected binary target/$arch/release/$b not found — was '$b' renamed in Cargo.toml?"
+                exit 1
+              fi
+            done
+            lipo -create -output "dist/$b" \
+              "target/aarch64-apple-darwin/release/$b" \
+              "target/x86_64-apple-darwin/release/$b"
+            lipo -info "dist/$b"
+          done
+          # Smoke-test the daemon (no UI) on BOTH slices: native arm64, and the
+          # cross-built x86_64 slice via Rosetta 2 (present on macos-14 runners)
+          # — this catches linker/symbol/ABI breakage that would otherwise ship
+          # silently to Intel users. The menu-bar binary starts a status-item UI
+          # (unsafe headless), so only verify its arches without executing it.
+          ./dist/macleaner --version
+          if arch -x86_64 true 2>/dev/null; then
+            arch -x86_64 ./dist/macleaner --version
+          else
+            echo "::warning::Rosetta 2 unavailable on this runner — x86_64 slice not execution-smoke-tested"
+          fi
+          lipo dist/macleaner-bar -verify_arch arm64 x86_64
+
+      - name: Package + checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          VER="${GITHUB_REF_NAME}"
+          # The tag name flows into artifact filenames; reject anything but a
+          # tag-shaped string so a stray '/' can't produce a broken tar path.
+          if ! [[ "$VER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$VER' is not a valid release version (e.g. v0.1.0)"
+            exit 1
+          fi
+          tar -czf "macleaner-${VER}-universal-macos.tar.gz" macleaner macleaner-bar
+          shasum -a 256 "macleaner-${VER}-universal-macos.tar.gz" \
+            > "macleaner-${VER}-universal-macos.tar.gz.sha256"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+          fail_on_unmatched_files: true
+          # Explicit body only: the install + quarantine instructions are
+          # safety-critical and must lead the notes, not be buried under an
+          # auto-generated changelog. Pin the default off so a future change to
+          # the action's default can't override the body.
+          generate_release_notes: false
+          body: |
+            Universal macOS binaries (Apple Silicon + Intel), unsigned.
+
+            ```sh
+            tar -xzf macleaner-*-universal-macos.tar.gz
+            # downloaded via browser? clear the quarantine flag BEFORE installing,
+            # so the copy macleaner-bar places in ~/Applications inherits a clean state:
+            xattr -dr com.apple.quarantine macleaner macleaner-bar
+            ./macleaner install        # daily disk-cleaner LaunchAgent
+            ./macleaner-bar install    # menu-bar app + Login Item
+            # already installed before clearing? also strip the bundled app:
+            xattr -dr com.apple.quarantine ~/Applications/"Macleaner Bar.app"
+            ```
+
+            These binaries are not yet Apple-notarized — see docs/SIGNING.md.

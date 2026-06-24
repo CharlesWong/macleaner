@@ -53,7 +53,10 @@ pub fn pressure_label(level: u8) -> &'static str {
 pub fn parse_swap_used_gb(s: &str) -> f64 {
     if let Some(idx) = s.find("used =") {
         for tok in s[idx + 6..].split_whitespace() {
-            let num: String = tok.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+            let num: String = tok
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
             if let Ok(v) = num.parse::<f64>() {
                 let mb = if tok.contains('G') {
                     v * 1024.0
@@ -129,7 +132,12 @@ pub fn aggregate(procs: Vec<Proc>, self_pid: i32) -> Vec<AppMem> {
         .map(|(name, a)| {
             let pid = a.main_pid.unwrap_or(a.any_pid);
             let killable = is_killable(&name, pid, self_pid);
-            AppMem { mb: a.rss / 1024, pid, killable, name }
+            AppMem {
+                mb: a.rss / 1024,
+                pid,
+                killable,
+                name,
+            }
         })
         .collect();
     out.sort_by(|a, b| b.mb.cmp(&a.mb));
@@ -152,7 +160,9 @@ pub fn pressure_level() -> u8 {
 }
 
 pub fn swap_used_gb() -> f64 {
-    sysctl_n("vm.swapusage").map(|s| parse_swap_used_gb(&s)).unwrap_or(0.0)
+    sysctl_n("vm.swapusage")
+        .map(|s| parse_swap_used_gb(&s))
+        .unwrap_or(0.0)
 }
 
 fn parse_ps_line(line: &str) -> Option<Proc> {
@@ -170,7 +180,10 @@ fn parse_ps_line(line: &str) -> Option<Proc> {
 /// Top `limit` memory-consuming apps (aggregated), largest first.
 pub fn top_consumers(limit: usize) -> Vec<AppMem> {
     let self_pid = std::process::id() as i32;
-    let out = match Command::new("ps").args(["-axo", "pid=,rss=,comm="]).output() {
+    let out = match Command::new("ps")
+        .args(["-axo", "pid=,rss=,comm="])
+        .output()
+    {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
         Err(_) => return Vec::new(),
     };
@@ -182,7 +195,10 @@ pub fn top_consumers(limit: usize) -> Vec<AppMem> {
 
 /// Resolve a pid to its owning-app name (via `ps`), or None if it's gone.
 fn process_name(pid: i32) -> Option<String> {
-    let o = Command::new("ps").args(["-p", &pid.to_string(), "-o", "comm="]).output().ok()?;
+    let o = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()?;
     if !o.status.success() {
         return None;
     }
@@ -224,7 +240,8 @@ mod tests {
 
     #[test]
     fn swap_parse_ac14() {
-        let g = parse_swap_used_gb("total = 12288.00M  used = 11303.38M  free = 984.62M  (encrypted)");
+        let g =
+            parse_swap_used_gb("total = 12288.00M  used = 11303.38M  free = 984.62M  (encrypted)");
         assert!(g > 10.5 && g < 11.5, "got {g}");
         assert_eq!(parse_swap_used_gb("nope"), 0.0);
     }
@@ -241,7 +258,9 @@ mod tests {
 
     #[test]
     fn is_main_ac10() {
-        assert!(is_main_process("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"));
+        assert!(is_main_process(
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        ));
         assert!(!is_main_process(
             "/Applications/Google Chrome.app/Contents/Frameworks/X Helper.app/Contents/MacOS/X"
         ));
@@ -251,9 +270,22 @@ mod tests {
     #[test]
     fn aggregate_sums_helpers_ac11() {
         let procs = vec![
-            Proc { pid: 455, rss_kb: 262144, path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into() },
-            Proc { pid: 500, rss_kb: 524288, path: "/Applications/Google Chrome.app/Contents/Frameworks/H.app/Contents/MacOS/H".into() },
-            Proc { pid: 9, rss_kb: 1024, path: "/usr/local/bin/node".into() },
+            Proc {
+                pid: 455,
+                rss_kb: 262144,
+                path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into(),
+            },
+            Proc {
+                pid: 500,
+                rss_kb: 524288,
+                path: "/Applications/Google Chrome.app/Contents/Frameworks/H.app/Contents/MacOS/H"
+                    .into(),
+            },
+            Proc {
+                pid: 9,
+                rss_kb: 1024,
+                path: "/usr/local/bin/node".into(),
+            },
         ];
         let apps = aggregate(procs, 1234);
         let chrome = apps.iter().find(|a| a.name == "Google Chrome").unwrap();
@@ -271,7 +303,10 @@ mod tests {
         assert!(!apps.is_empty(), "expected some processes");
         assert!(apps[0].mb > 0, "top app should use memory");
         assert!(apps.iter().any(|a| a.killable), "expected a killable app");
-        assert!(matches!(pressure_level(), 1 | 2 | 4), "unexpected pressure level");
+        assert!(
+            matches!(pressure_level(), 1 | 2 | 4),
+            "unexpected pressure level"
+        );
         assert!(swap_used_gb() >= 0.0);
     }
 

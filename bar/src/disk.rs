@@ -49,13 +49,17 @@ mod tests {
 
     #[test]
     fn free_gb_positive_ac6() {
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or("/".into());
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or("/".into());
         assert!(free_gb(&home).unwrap() > 0);
     }
 
     #[test]
     fn total_ge_free() {
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or("/".into());
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or("/".into());
         assert!(total_gb(&home).unwrap() >= free_gb(&home).unwrap());
     }
 

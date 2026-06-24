@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "Safe, idempotent daily disk cleaner for macOS with a launchd LaunchAgent."
 license = "MIT"
+authors = ["Charles Wong"]
+repository = "https://github.com/CharlesWong/macleaner"
+homepage = "https://github.com/CharlesWong/macleaner"
+readme = "README.md"
+keywords = ["macos", "cleaner", "disk", "cache", "launchd"]
+categories = ["command-line-utilities", "filesystem"]
 
 [[bin]]
 name = "macleaner"

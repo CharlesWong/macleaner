@@ -126,8 +126,8 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
             } = ev
             {
                 let cx = rect.position.x + rect.size.width as f64 / 2.0;
-                let just_dismissed = last_hide
-                    .is_some_and(|t| t.elapsed() < Duration::from_millis(350));
+                let just_dismissed =
+                    last_hide.is_some_and(|t| t.elapsed() < Duration::from_millis(350));
                 if !panel.visible && just_dismissed {
                     // this same click already dismissed the panel (resign-key);
                     // consume it so the panel doesn't immediately reopen.
@@ -156,7 +156,10 @@ fn run_tray(home: std::path::PathBuf) -> anyhow::Result<()> {
                     clean.reclaimed_gb = bytes as f64 / 1024f64.powi(3);
                     let buckets = bridge::parse_breakdown(&out)
                         .into_iter()
-                        .map(|(name, b)| bridge::Bucket { name, amount: bridge::format_bytes(b) })
+                        .map(|(name, b)| bridge::Bucket {
+                            name,
+                            amount: bridge::format_bytes(b),
+                        })
                         .collect();
                     clean.results = Some(bridge::ResultsPayload {
                         reclaimed_gb: format!("{:.1}", clean.reclaimed_gb),
@@ -269,7 +272,10 @@ fn handle_action(
             let tx = res_tx.clone();
             let h = home.to_path_buf();
             std::thread::spawn(move || {
-                let _ = tx.send(CleanMsg::Done(actions::run_capture(&h, &["run", "--force"])));
+                let _ = tx.send(CleanMsg::Done(actions::run_capture(
+                    &h,
+                    &["run", "--force"],
+                )));
             });
         }
         Action::Quit => *control_flow = ControlFlow::Exit,
@@ -302,7 +308,12 @@ fn send_mem(panel: &Panel) {
     let level = mem::pressure_level();
     let apps = mem::top_consumers(8)
         .into_iter()
-        .map(|a| bridge::AppRow { name: a.name, mb: a.mb, pid: a.pid, killable: a.killable })
+        .map(|a| bridge::AppRow {
+            name: a.name,
+            mb: a.mb,
+            pid: a.pid,
+            killable: a.killable,
+        })
         .collect();
     let m = bridge::MemState {
         level,
@@ -348,10 +359,61 @@ fn cmd_install(home: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Escape extended-regex metacharacters so a literal string is matched verbatim
+/// by `pkill -f`. macOS `pgrep`/`pkill` match patterns as **extended** regular
+/// expressions by default (see `man pgrep` / re_format(3) — verified: `sl(e)ep`
+/// matches the `sleep` process), so ERE escaping is the correct dialect here.
+/// Without this, the `.` in "Macleaner Bar.app" would match any character.
+fn ere_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if r".^$*+?()[]{}|\".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn cmd_uninstall(home: &Path) -> anyhow::Result<()> {
-    let _ = Command::new("pkill").args(["-f", bundle::APP_DIR_NAME]).status();
+    // `pkill -f` matches its argument as an extended regex; escape it so the
+    // dot stays literal. Matching the bundle name targets the installed
+    // menu-bar app (its path contains "Macleaner Bar.app") and not the CLI
+    // process running this uninstall (whose path does not).
+    let _ = Command::new("pkill")
+        .args(["-f", &ere_escape(bundle::APP_DIR_NAME)])
+        .status();
     let _ = loginitem::unregister();
     bundle::uninstall(home)?;
     println!("uninstalled (Login Item removed, app bundle deleted).");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ere_escape;
+
+    #[test]
+    fn ere_escape_makes_dot_literal() {
+        assert_eq!(ere_escape("Macleaner Bar.app"), r"Macleaner Bar\.app");
+    }
+
+    #[test]
+    fn ere_escape_of_app_dir_name_is_safe_literal() {
+        // The exact value handed to `pkill -f` in cmd_uninstall: a metacharacter
+        // sneaking into APP_DIR_NAME would otherwise become an unintended regex.
+        assert_eq!(
+            ere_escape(crate::bundle::APP_DIR_NAME),
+            r"Macleaner Bar\.app"
+        );
+    }
+
+    #[test]
+    fn ere_escape_handles_all_metacharacters() {
+        assert_eq!(ere_escape("a.b*c+d?"), r"a\.b\*c\+d\?");
+        assert_eq!(ere_escape("(x)[y]{z}"), r"\(x\)\[y\]\{z\}");
+        // anchors, alternation, and backslash itself
+        assert_eq!(ere_escape(r"a^b$c|d\e"), r"a\^b\$c\|d\\e");
+        assert_eq!(ere_escape("plain"), "plain");
+    }
 }

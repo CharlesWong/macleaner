@@ -98,7 +98,10 @@ impl Default for DailyCfg {
             simulators: true,
             brew: true,
             stale_tmp: StaleTmpCfg::default(),
-            old_logs: AgeDir { enabled: true, age_days: 30 },
+            old_logs: AgeDir {
+                enabled: true,
+                age_days: 30,
+            },
         }
     }
 }
@@ -107,17 +110,29 @@ impl Default for SweepCfg {
     fn default() -> Self {
         Self {
             // Aggressive tier — enabled, but only fires below min_free_gb.
-            library_caches: AgeDir { enabled: true, age_days: 14 },
+            library_caches: AgeDir {
+                enabled: true,
+                age_days: 14,
+            },
             pip_cache: true,
-            cargo_cache: AgeDir { enabled: true, age_days: 14 },
-            trash: AgeDir { enabled: true, age_days: 30 },
+            cargo_cache: AgeDir {
+                enabled: true,
+                age_days: 14,
+            },
+            trash: AgeDir {
+                enabled: true,
+                age_days: 30,
+            },
         }
     }
 }
 
 impl Default for AgeDir {
     fn default() -> Self {
-        Self { enabled: true, age_days: 14 }
+        Self {
+            enabled: true,
+            age_days: 14,
+        }
     }
 }
 

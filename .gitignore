@@ -1,3 +1,6 @@
 /target
 .harness/
 *.log
+
+# build-process scaffolding (company/ harness)
+deploy/harness/

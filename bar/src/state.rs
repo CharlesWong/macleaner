@@ -16,7 +16,10 @@ pub fn home() -> io::Result<PathBuf> {
 
 /// Current time as unix seconds.
 pub fn now_epoch() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// macleaner's last successful-run timestamp (unix seconds), if recorded.
@@ -63,8 +66,11 @@ mod tests {
 
     static N: AtomicU32 = AtomicU32::new(0);
     fn tmp_home() -> PathBuf {
-        let p = std::env::temp_dir()
-            .join(format!("mbar-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+        let p = std::env::temp_dir().join(format!(
+            "mbar-test-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
         std::fs::create_dir_all(&p).unwrap();
         p
     }

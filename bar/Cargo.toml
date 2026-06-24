@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "macOS menu-bar companion for macleaner (disk free space + clean controls, SMAppService login item)."
 license = "MIT"
+authors = ["Charles Wong"]
+repository = "https://github.com/CharlesWong/macleaner"
+homepage = "https://github.com/CharlesWong/macleaner"
+readme = "README.md"
+keywords = ["macos", "menu-bar", "cleaner", "disk", "memory"]
+categories = ["command-line-utilities", "gui"]
 
 [[bin]]
 name = "macleaner-bar"
