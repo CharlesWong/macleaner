@@ -140,7 +140,7 @@ pub fn aggregate(procs: Vec<Proc>, self_pid: i32) -> Vec<AppMem> {
             }
         })
         .collect();
-    out.sort_by(|a, b| b.mb.cmp(&a.mb));
+    out.sort_by_key(|x| std::cmp::Reverse(x.mb));
     out
 }
 
