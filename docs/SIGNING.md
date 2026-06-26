@@ -1,25 +1,40 @@
 # Code signing & notarization
 
-The released binaries are currently **unsigned and un-notarized**. They run
-fine, but macOS Gatekeeper treats them as "unidentified developer" — so a user
-who downloads them via a browser gets a quarantine prompt on first launch.
+**Release binaries are signed with a Developer ID and notarized by Apple**
+(since v0.1.0), so a browser-downloaded `.tar.gz` runs without a Gatekeeper
+quarantine prompt. Signing/notarization uses the maintainer's Apple Developer
+account ($99/year + a "Developer ID Application" certificate) and **runs on the
+maintainer's Mac** — the private key never enters CI.
 
-This is the single biggest launch-readiness gap, and it's the one piece that
-**requires the maintainer's Apple Developer account** ($99/year + a "Developer
-ID Application" certificate). It can't be automated without those credentials.
+## Release flow
 
-## What the user sees today (unsigned)
+`.github/workflows/release.yml` builds the universal binaries on a `v*` tag.
+After it publishes, the maintainer runs [`scripts/notarize.sh`](../scripts/notarize.sh),
+which signs + notarizes those binaries and replaces the release assets in place:
 
-- **Binaries copied/installed locally** (e.g. via `scp`, or run from the cloned
-  repo): run normally — terminal-launched binaries aren't Gatekeeper-blocked.
-- **Downloaded via browser** (the `.tar.gz` from a GitHub Release): the files
-  carry the `com.apple.quarantine` xattr, so the menu-bar `.app` is blocked on
-  first launch. Workaround:
-  ```sh
-  xattr -dr com.apple.quarantine macleaner macleaner-bar
-  # or, for the installed app:
-  xattr -dr com.apple.quarantine ~/Applications/"Macleaner Bar.app"
-  ```
+```sh
+scripts/notarize.sh v0.1.0
+```
+
+One-time setup for that script: a "Developer ID Application" cert in the login
+keychain, and a stored notarytool credential profile:
+```sh
+xcrun notarytool store-credentials macleaner-notary \
+  --key AuthKey_XXXXXXXXXX.p8 --key-id XXXXXXXXXX --issuer <issuer-uuid>
+```
+
+> Bare CLI binaries can't be *stapled*, so Gatekeeper checks their notarization
+> ticket online. A future menu-bar `.app`-bundle distribution can be stapled for
+> fully-offline verification (see the recipe below).
+
+## Building from source (unsigned)
+
+A binary you `cargo build` yourself is unsigned, but terminal-launched binaries
+you built locally aren't Gatekeeper-blocked. If you ever need to clear a
+quarantine flag on a file you downloaded:
+```sh
+xattr -dr com.apple.quarantine macleaner macleaner-bar
+```
 
 ## How to sign + notarize (once you have a Developer ID)
 

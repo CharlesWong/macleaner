@@ -22,25 +22,20 @@ They share one repo so the daemon's output and the bar's parser stay in sync;
 
 ## Install
 
-### From a release (no toolchain needed)
+### From a release (signed + notarized — just run it)
 
 Download the universal (Apple Silicon + Intel) binaries from the
 [latest release](https://github.com/CharlesWong/macleaner/releases/latest):
 
 ```sh
 tar -xzf macleaner-*-universal-macos.tar.gz
-# the app isn't Apple-notarized yet, so clear the download quarantine BEFORE
-# installing — the copy macleaner-bar places in ~/Applications inherits it:
-xattr -dr com.apple.quarantine macleaner macleaner-bar
 ./macleaner install        # daily disk-cleaner LaunchAgent (runs at 03:00 + at login)
 ./macleaner-bar install    # menu-bar app + Login Item
-# already ran install before clearing? also strip the installed bundle:
-xattr -dr com.apple.quarantine ~/Applications/"Macleaner Bar.app"
 ```
 
-> **Gatekeeper:** the binaries are currently **unsigned / un-notarized**. The
-> `xattr` line above clears the quarantine flag so macOS doesn't block the app.
-> See [`docs/SIGNING.md`](docs/SIGNING.md) for the notarization plan.
+The release binaries are **signed with a Developer ID and notarized by Apple**,
+so macOS Gatekeeper runs them without any quarantine workaround. (Building from
+source yourself produces an unsigned binary — see [`docs/SIGNING.md`](docs/SIGNING.md).)
 
 ### From source
 
